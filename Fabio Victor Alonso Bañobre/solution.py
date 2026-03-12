@@ -120,3 +120,22 @@ class SmartPlayer(Player):
                 if val:
                     h ^= zob[val][r][c]
         return h
+
+    def _tt_get(self, h: int, depth: int):
+        entry = self._tt.get(h)
+        if entry and entry[1] >= depth:
+            return entry[0]
+        return None
+
+    def _tt_put(self, h: int, score: float, depth: int):
+        if len(self._tt) >= TT_MAX_SIZE:
+            evict_n  = TT_MAX_SIZE // 4   
+            shallow  = [k for k, v in self._tt.items() if v[1] <= 1]
+            if len(shallow) >= evict_n:
+                victims = random.sample(shallow, evict_n)
+            else:
+                victims = random.sample(list(self._tt.keys()),
+                                        min(evict_n, len(self._tt)))
+            for k in victims:
+                del self._tt[k]
+        self._tt[h] = (score, depth)
