@@ -58,3 +58,65 @@ class SmartPlayer(Player):
 
         self._zobrist_n = 0
         self._zobrist   = None
+
+    def play(self, board: HexBoard) -> tuple:
+        self._start_time = time.time()
+        self._time_limit = self.profile.time_budget   #
+        self._n          = board.size
+
+        self._configure_regime()
+        self._init_zobrist()   
+
+        occupied = sum(
+            board.board[r][c] != 0
+            for r in range(self._n) for c in range(self._n)
+        )
+        if occupied <= 1:
+            self._tt.clear()
+
+        opening = self._opening_move(board)
+        if opening:
+            return opening
+
+        candidates = self._order_moves(board)
+        if not candidates:
+            for r in range(self._n):
+                for c in range(self._n):
+                    if board.board[r][c] == 0:
+                        return (r, c)
+
+        return self._iterative_deepening_ab(board, candidates, candidates[0])
+
+    def _configure_regime(self):
+        n = self._n
+        if n <= REGIME_A_MAX_N:
+            self._eval_mode = 'RICH'
+            self._max_depth = 4
+        elif n <= REGIME_B_MAX_N:
+            self._eval_mode = 'RICH' if n <= 11 else 'FAST'
+            self._max_depth = 3
+        else:
+            self._eval_mode = 'FAST'
+            self._max_depth = 2
+
+
+    def _init_zobrist(self):
+        if self._zobrist_n == self._n:
+            return
+        n   = self._n
+        rng = random.Random(0xDEADBEEF)   
+        self._zobrist = [
+            [[rng.getrandbits(64) for _ in range(n)] for _ in range(n)]
+            for _ in range(3)
+        ]
+        self._zobrist_n = n
+        self._tt.clear()
+
+    def _board_hash(self, board: HexBoard) -> int:
+        h   = 0
+        zob = self._zobrist
+        for r, row in enumerate(board.board):
+            for c, val in enumerate(row):
+                if val:
+                    h ^= zob[val][r][c]
+        return h
