@@ -189,3 +189,115 @@ class SmartPlayer(Player):
             best_move = depth_best
 
         return best_move
+
+    def _alphabeta(self, board: HexBoard, depth: int,
+                   alpha: float, beta: float, maximizing: bool) -> float:
+        if board.check_connection(self.player_id):
+            return 1_000_000.0
+        if board.check_connection(self.profile.opponent):
+            return -1_000_000.0
+
+        if depth == 0 or self._time_remaining() < 0.05:
+            return self._evaluate(board)
+
+        h      = self._board_hash(board)
+        cached = self._tt_get(h, depth)
+        if cached is not None:
+            return cached
+
+        moves = self._order_moves(board)
+        if not moves:
+            return self._evaluate(board)
+
+        if maximizing:
+            val = float('-inf')
+            for move in moves:
+                clone = board.clone()
+                clone.place_piece(move[0], move[1], self.player_id)
+                val   = max(val, self._alphabeta(clone, depth - 1,
+                                                 alpha, beta, False))
+                alpha = max(alpha, val)
+                if val >= beta:
+                    break   # Poda Beta
+        else:
+            val = float('inf')
+            for move in moves:
+                clone = board.clone()
+                clone.place_piece(move[0], move[1], self.profile.opponent)
+                val  = min(val, self._alphabeta(clone, depth - 1,
+                                                alpha, beta, True))
+                beta = min(beta, val)
+                if val <= alpha:
+                    break   
+
+        self._tt_put(h, val, depth)
+        return val
+
+
+    def _evaluate(self, board: HexBoard) -> float:
+        my_id    = self.player_id
+        opp_id   = self.profile.opponent
+        max_dist = float(self._n * self._n)
+
+        raw_mine = self._bfs_distance(board, my_id)
+        raw_opp  = self._bfs_distance(board, opp_id)
+
+        dist_mine = raw_mine if raw_mine != float('inf') else max_dist
+        dist_opp  = raw_opp  if raw_opp  != float('inf') else max_dist
+
+        score = W_PATH * (dist_opp - dist_mine)
+
+        if self._eval_mode == 'RICH':
+            vc_mine = self._count_virtual_connections(board, my_id)
+            vc_opp  = self._count_virtual_connections(board, opp_id)
+            score  += W_VIRTUAL * vc_mine - W_VIRTUAL_O * vc_opp
+
+        return score * (0.5 + self.profile.aggression)
+
+    def _bfs_distance(self, board: HexBoard, player_id: int) -> float:
+        n   = self._n
+        INF = float('inf')
+        opp = 2 if player_id == 1 else 1
+
+        dist = [[INF] * n for _ in range(n)]
+        dq   = deque()
+
+        if player_id == 1:
+            sources = [(r, 0) for r in range(n)]
+            goal_fn = lambda r, c: c == n - 1
+        else:
+            sources = [(0, c) for c in range(n)]
+            goal_fn = lambda r, c: r == n - 1
+
+        for r, c in sources:
+            cell = board.board[r][c]
+            if cell == opp:
+                continue
+            cost = 0 if cell == player_id else 1
+            if cost < dist[r][c]:
+                dist[r][c] = cost
+                if cost == 0:
+                    dq.appendleft((cost, r, c))
+                else:
+                    dq.append((cost, r, c))
+
+        while dq:
+            cost, r, c = dq.popleft()
+            if cost > dist[r][c]:
+                continue
+            if goal_fn(r, c):
+                return cost
+            for nr, nc in get_neighbors(r, c, n):
+                cell = board.board[nr][nc]
+                if cell == opp:
+                    continue
+                step     = 0 if cell == player_id else 1
+                new_cost = cost + step
+                if new_cost < dist[nr][nc]:
+                    dist[nr][nc] = new_cost
+                    if step == 0:
+                        dq.appendleft((new_cost, nr, nc))
+                    else:
+                        dq.append((new_cost, nr, nc))
+
+        return INF
