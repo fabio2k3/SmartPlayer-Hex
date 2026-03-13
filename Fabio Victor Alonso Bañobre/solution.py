@@ -11,12 +11,12 @@ REGIME_C_MIN_N = 14
 
 TT_MAX_SIZE = 200_000   
 
-BEAM_A = 8   
-BEAM_B = 7   
+BEAM_A = 8  
+BEAM_B = 7 
 BEAM_C = 6    
 
 W_PATH      = 1.0   
-W_VIRTUAL   = 0.4   
+W_VIRTUAL   = 0.4  
 W_VIRTUAL_O = 0.3   
 
 def get_neighbors(r: int, c: int, n: int) -> list:
@@ -27,6 +27,7 @@ def get_neighbors(r: int, c: int, n: int) -> list:
     else:
         neighbors += [(r - 1, c),     (r - 1, c + 1),
                       (r + 1, c),     (r + 1, c + 1)]
+    return [(nr, nc) for nr, nc in neighbors if 0 <= nr < n and 0 <= nc < n]
 
 class PlayerProfile:
 
@@ -44,7 +45,7 @@ class PlayerProfile:
             self.aggression  = 0.5
 
 class SmartPlayer(Player):
-
+    
     def __init__(self, player_id: int):
         super().__init__(player_id)
         self.profile     = PlayerProfile(player_id)
@@ -54,25 +55,27 @@ class SmartPlayer(Player):
         self._eval_mode  = 'FAST'
         self._max_depth  = 2
 
+        self._move_count = 0
+
         self._tt: dict = {}
 
-        self._zobrist_n = 0
-        self._zobrist   = None
+        self._zobrist_n    = 0
+        self._zobrist      = None
+        self._current_hash = 0   #
 
     def play(self, board: HexBoard) -> tuple:
         self._start_time = time.time()
-        self._time_limit = self.profile.time_budget   #
+        self._time_limit = self.profile.time_budget
         self._n          = board.size
 
         self._configure_regime()
         self._init_zobrist()   
 
-        occupied = sum(
-            board.board[r][c] != 0
-            for r in range(self._n) for c in range(self._n)
-        )
-        if occupied <= 1:
+        self._current_hash = self._compute_hash(board)
+        if self._move_count <= 1 or self._current_hash == 0:
             self._tt.clear()
+            self._move_count = 0
+        self._move_count += 1
 
         opening = self._opening_move(board)
         if opening:
@@ -99,20 +102,21 @@ class SmartPlayer(Player):
             self._eval_mode = 'FAST'
             self._max_depth = 2
 
-
     def _init_zobrist(self):
         if self._zobrist_n == self._n:
             return
         n   = self._n
-        rng = random.Random(0xDEADBEEF)   
+        rng = random.Random(0xDEADBEEF)
         self._zobrist = [
             [[rng.getrandbits(64) for _ in range(n)] for _ in range(n)]
-            for _ in range(3)
+            for _ in range(3)   
         ]
-        self._zobrist_n = n
+
+        self._zobrist_n    = n
+        self._current_hash = 0
         self._tt.clear()
 
-    def _board_hash(self, board: HexBoard) -> int:
+    def _compute_hash(self, board: HexBoard) -> int:
         h   = 0
         zob = self._zobrist
         for r, row in enumerate(board.board):
@@ -120,6 +124,9 @@ class SmartPlayer(Player):
                 if val:
                     h ^= zob[val][r][c]
         return h
+
+    def _update_hash(self, h: int, r: int, c: int, player_id: int) -> int:
+        return h ^ self._zobrist[player_id][r][c]
 
     def _tt_get(self, h: int, depth: int):
         entry = self._tt.get(h)
@@ -129,8 +136,8 @@ class SmartPlayer(Player):
 
     def _tt_put(self, h: int, score: float, depth: int):
         if len(self._tt) >= TT_MAX_SIZE:
-            evict_n  = TT_MAX_SIZE // 4   
-            shallow  = [k for k, v in self._tt.items() if v[1] <= 1]
+            evict_n = TT_MAX_SIZE // 4
+            shallow = [k for k, v in self._tt.items() if v[1] <= 1]
             if len(shallow) >= evict_n:
                 victims = random.sample(shallow, evict_n)
             else:
@@ -142,18 +149,11 @@ class SmartPlayer(Player):
 
     def _opening_move(self, board: HexBoard):
         center = self._n // 2
-        if board.board[center][center] == 0:
-            occupied = sum(
-                board.board[r][c] != 0
-                for r in range(self._n) for c in range(self._n)
-            )
-            if occupied == 0 or (self.player_id == 2 and occupied == 1):
-                return (center, center)
+        if self._move_count <= 2 and board.board[center][center] == 0:
+            return (center, center)
         return None
 
-
-    def _iterative_deepening_ab(self, board: HexBoard,
-                                candidates: list, fallback) -> tuple:
+    def _iterative_deepening_ab(self, board: HexBoard, candidates: list, fallback) -> tuple:
         best_move = fallback
 
         n = self._n
@@ -179,7 +179,12 @@ class SmartPlayer(Player):
 
                 clone = board.clone()
                 clone.place_piece(move[0], move[1], self.player_id)
-                val = self._alphabeta(clone, depth - 1, alpha, beta, False)
+
+                h_child = self._update_hash(
+                    self._current_hash, move[0], move[1], self.player_id
+                )
+                val = self._alphabeta(clone, h_child, depth - 1,
+                                      alpha, beta, False)
 
                 if val > best_val:
                     best_val   = val
@@ -190,8 +195,7 @@ class SmartPlayer(Player):
 
         return best_move
 
-    def _alphabeta(self, board: HexBoard, depth: int,
-                   alpha: float, beta: float, maximizing: bool) -> float:
+    def _alphabeta(self, board: HexBoard, h: int, depth: int, alpha: float, beta: float, maximizing: bool) -> float:
         if board.check_connection(self.player_id):
             return 1_000_000.0
         if board.check_connection(self.profile.opponent):
@@ -200,7 +204,6 @@ class SmartPlayer(Player):
         if depth == 0 or self._time_remaining() < 0.05:
             return self._evaluate(board)
 
-        h      = self._board_hash(board)
         cached = self._tt_get(h, depth)
         if cached is not None:
             return cached
@@ -214,17 +217,20 @@ class SmartPlayer(Player):
             for move in moves:
                 clone = board.clone()
                 clone.place_piece(move[0], move[1], self.player_id)
-                val   = max(val, self._alphabeta(clone, depth - 1,
+                h_child = self._update_hash(h, move[0], move[1], self.player_id)
+                val   = max(val, self._alphabeta(clone, h_child, depth - 1,
                                                  alpha, beta, False))
                 alpha = max(alpha, val)
                 if val >= beta:
-                    break   # Poda Beta
+                    break   
         else:
             val = float('inf')
             for move in moves:
                 clone = board.clone()
                 clone.place_piece(move[0], move[1], self.profile.opponent)
-                val  = min(val, self._alphabeta(clone, depth - 1,
+                h_child = self._update_hash(h, move[0], move[1],
+                                            self.profile.opponent)
+                val  = min(val, self._alphabeta(clone, h_child, depth - 1,
                                                 alpha, beta, True))
                 beta = min(beta, val)
                 if val <= alpha:
@@ -233,11 +239,10 @@ class SmartPlayer(Player):
         self._tt_put(h, val, depth)
         return val
 
-
     def _evaluate(self, board: HexBoard) -> float:
         my_id    = self.player_id
         opp_id   = self.profile.opponent
-        max_dist = float(self._n * self._n)
+        max_dist = float(self._n * self._n)   
 
         raw_mine = self._bfs_distance(board, my_id)
         raw_opp  = self._bfs_distance(board, opp_id)
@@ -286,7 +291,7 @@ class SmartPlayer(Player):
             if cost > dist[r][c]:
                 continue
             if goal_fn(r, c):
-                return cost
+                return cost   
             for nr, nc in get_neighbors(r, c, n):
                 cell = board.board[nr][nc]
                 if cell == opp:
@@ -301,3 +306,70 @@ class SmartPlayer(Player):
                         dq.append((new_cost, nr, nc))
 
         return INF
+
+    def _count_virtual_connections(self, board: HexBoard, player_id: int) -> int:
+        n            = self._n
+        grid         = board.board
+        count        = 0
+        seen_bridges: set = set()
+
+        own_cells = [
+            (r, c)
+            for r in range(n) for c in range(n)
+            if grid[r][c] == player_id
+        ]
+
+        for (r1, c1) in own_cells:
+            nb1 = set(get_neighbors(r1, c1, n))
+            for (m1r, m1c) in nb1:
+                if grid[m1r][m1c] != 0:
+                    continue
+                for (r2, c2) in get_neighbors(m1r, m1c, n):
+                    if (r2, c2) == (r1, c1):
+                        continue
+                    if grid[r2][c2] != player_id:
+                        continue
+                    bridge = frozenset([(r1, c1), (r2, c2)])
+                    if bridge in seen_bridges:
+                        continue
+                    nb2    = set(get_neighbors(r2, c2, n))
+                    shared = nb1 & nb2
+                    for (m2r, m2c) in shared:
+                        if (m2r, m2c) != (m1r, m1c) and grid[m2r][m2c] == 0:
+                            seen_bridges.add(bridge)
+                            count += 1
+                            break
+
+        return count
+
+    def _order_moves(self, board: HexBoard) -> list:
+        n    = self._n
+        grid = board.board
+        mid  = n / 2.0
+
+        scored = []
+        for r in range(n):
+            for c in range(n):
+                if grid[r][c] != 0:
+                    continue
+
+                score          = 0.0
+                own_nb = opp_nb = 0
+
+                for nr, nc in get_neighbors(r, c, n):
+                    if grid[nr][nc] == self.player_id:
+                        own_nb += 1
+                    elif grid[nr][nc] == self.profile.opponent:
+                        opp_nb += 1
+
+                score += own_nb * 3.0
+                score += opp_nb * 2.0
+                score += self.profile.center_bias * (n - abs(r - mid) - abs(c - mid))
+
+                scored.append((score, r, c))
+
+        scored.sort(key=lambda x: -x[0])
+        return [(r, c) for (_, r, c) in scored]
+
+    def _time_remaining(self) -> float:
+        return self._time_limit - (time.time() - self._start_time)
