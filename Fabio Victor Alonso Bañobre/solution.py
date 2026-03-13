@@ -139,3 +139,53 @@ class SmartPlayer(Player):
             for k in victims:
                 del self._tt[k]
         self._tt[h] = (score, depth)
+
+    def _opening_move(self, board: HexBoard):
+        center = self._n // 2
+        if board.board[center][center] == 0:
+            occupied = sum(
+                board.board[r][c] != 0
+                for r in range(self._n) for c in range(self._n)
+            )
+            if occupied == 0 or (self.player_id == 2 and occupied == 1):
+                return (center, center)
+        return None
+
+
+    def _iterative_deepening_ab(self, board: HexBoard,
+                                candidates: list, fallback) -> tuple:
+        best_move = fallback
+
+        n = self._n
+        if n <= REGIME_A_MAX_N:
+            beam = BEAM_A
+        elif n <= REGIME_B_MAX_N:
+            beam = BEAM_B
+        else:
+            beam = BEAM_C
+        root_candidates = candidates[:beam]
+
+        for depth in range(1, self._max_depth + 1):
+            if self._time_remaining() < self._time_limit * 0.15:
+                break
+
+            best_val    = float('-inf')
+            depth_best  = best_move
+            alpha, beta = float('-inf'), float('inf')
+
+            for move in root_candidates:
+                if self._time_remaining() < self._time_limit * 0.10:
+                    break
+
+                clone = board.clone()
+                clone.place_piece(move[0], move[1], self.player_id)
+                val = self._alphabeta(clone, depth - 1, alpha, beta, False)
+
+                if val > best_val:
+                    best_val   = val
+                    depth_best = move
+                alpha = max(alpha, best_val)
+
+            best_move = depth_best
+
+        return best_move
