@@ -1,5 +1,5 @@
-from player import Player
-from board import HexBoard
+from playerTest import Player
+from boardTest import HexBoard
 
 import math
 import random

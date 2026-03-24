@@ -3,10 +3,10 @@ test_harness.py — SmartPlayer vs SmartPlayer en tableros de distintos tamaños
 """
 import time
 import sys
-from board import HexBoard
+from boardTest import HexBoard
 from solution import SmartPlayer
 
-BOARD_SIZES = [5, 7, 9, 11, 13, 14, 17, 20]
+BOARD_SIZES = [5, 7, 9, 11, 13, 14, 17, 19]
 TIME_WARN   = 4.5
 TIME_LIMIT  = 5.0
 MAX_TURNS   = 400
