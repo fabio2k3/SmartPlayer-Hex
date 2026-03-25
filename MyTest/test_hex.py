@@ -25,7 +25,7 @@ def play_game(n):
     players = {1: SmartPlayer(1), 2: SmartPlayer(2)}
     for pid in (1,2):
         players[pid]._n = n
-        players[pid]._configure_regime()
+        players[pid]._configure_search()
 
     stats = {"n":n,"turns":[],"winner":None,"disqualified":False,
              "disq_player":None,"invalid_moves":0,"total_time":0.0}
